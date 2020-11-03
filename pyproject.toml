@@ -13,15 +13,27 @@ include = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.6"
+python = "^3.6.2"
 cryptography = "*"
 pyspnego = "< 1.0.0"
-requests = "^2.9.1"
-requests-credssp = {version = "^1.0.0", optional = true}
+httpx = "^0.18.2"
+httpcore = "^0.13.6"
+async_generator = {version = "^1.10", python = "< 3.7"}
+psrpcore = {git = "https://github.com/jborean93/psrpcore.git", rev = "main"}
+
+# kerberos
 gssapi = {version = "^1.5.0", optional = true, markers = "sys_platform!='win32'"}
 krb5 = {version = "< 1.0.0", optional = true, markers = "sys_platform!='win32'"}
 
+# socks
+async-timeout = {version = "^3.0.1", optional = true}
+python-socks = {version = "^1.2.4", optional = true}
+
+# ssh
+asyncssh = {version = "^2.7.0", optional = true}
+
 [tool.poetry.dev-dependencies]
+black = "^21.6b0"
 pycodestyle = "*"
 pytest = "*"
 pytest-cov = "*"
@@ -33,6 +45,8 @@ tox = "*"
 [tool.poetry.extras]
 credssp = ["requests-credssp"]
 kerberos = ["gssapi", "krb5"]
+socks = ["async-timeout", "python-socks"]
+ssh = ["asyncssh"]
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
@@ -56,12 +70,31 @@ commands_pre =
     poetry install
 
 commands =
-    poetry run python -m pytest -v --cov pypsrp --cov-report term-missing
+    poetry run python -m pytest -v --cov pypsrp --cov psrp --cov-report term-missing
 
 passenv =
     PSRP_*
 
 [testenv:lint]
 commands =
+    poetry run python -m black --check .
     poetry run python -m pycodestyle pypsrp --verbose --show-source --statistics --max-line-length 119
 """
+
+[tool.black]
+line-length = 120
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+  | pypsrp
+)/
+'''

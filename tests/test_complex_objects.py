@@ -4,10 +4,23 @@ import pytest
 
 from . import assert_xml_diff
 
-from pypsrp.complex_objects import Array, BufferCell, BufferCellType, Color, \
-    Command, CommandParameter, CommandType, Coordinates, HostInfo, \
-    ObjectMeta, Pipeline, PipelineResultTypes, PSThreadOptions, \
-    RemoteStreamOptions, Size
+from pypsrp.complex_objects import (
+    Array,
+    BufferCell,
+    BufferCellType,
+    Color,
+    Command,
+    CommandParameter,
+    CommandType,
+    Coordinates,
+    HostInfo,
+    ObjectMeta,
+    Pipeline,
+    PipelineResultTypes,
+    PSThreadOptions,
+    RemoteStreamOptions,
+    Size,
+)
 from pypsrp.host import PSHost, PSHostRawUserInterface, PSHostUserInterface
 from pypsrp.serializer import Serializer
 from pypsrp._utils import to_unicode
@@ -20,20 +33,20 @@ def normalise_xml(xml_string):
 
 
 class TestEnum(object):
-
     def test_enum_invalid_value(self):
         state = PSThreadOptions(value=PSThreadOptions.DEFAULT)
         assert str(state) == "Default"
         state.value = 15
         with pytest.raises(KeyError) as err:
             str(state)
-        assert "15 is not a valid enum value for System.Management." \
-               "Automation.Runspaces.PSThreadOptions" in str(err.value)
+        assert "15 is not a valid enum value for System.Management." "Automation.Runspaces.PSThreadOptions" in str(
+            err.value
+        )
 
 
 class TestHostInfo(object):
 
-    HOST_XML = '''<Obj RefId="0">
+    HOST_XML = """<Obj RefId="0">
             <MS>
                 <Obj N="_hostDefaultData" RefId="1">
                     <MS>
@@ -172,7 +185,7 @@ class TestHostInfo(object):
                 <B N="_isHostRawUINull">false</B>
                 <B N="_useRunspaceHost">false</B>
             </MS>
-        </Obj>'''
+        </Obj>"""
 
     def test_create_host_info(self):
         serializer = Serializer()
@@ -189,9 +202,16 @@ class TestHostInfo(object):
         window_title = "Random Window Title"
 
         ps_raw_ui = PSHostRawUserInterface(
-            window_title, cursor_size, foreground_color, background_color,
-            cursor_position, window_position, buffer_size,
-            max_physical_window_size, max_window_size, window_size
+            window_title,
+            cursor_size,
+            foreground_color,
+            background_color,
+            cursor_position,
+            window_position,
+            buffer_size,
+            max_physical_window_size,
+            max_window_size,
+            window_size,
         )
         ps_ui = PSHostUserInterface(raw_ui=ps_raw_ui)
         ps_host = PSHost(None, None, False, None, None, ps_ui, None)
@@ -205,7 +225,6 @@ class TestHostInfo(object):
 
 
 class TestRemoteStreamOptions(object):
-
     def test_to_string_one_value(self):
         options = RemoteStreamOptions(value=1)
         expected = "AddInvocationInfoToErrorRecord"
@@ -214,15 +233,14 @@ class TestRemoteStreamOptions(object):
 
     def test_to_string_multiple_values(self):
         options = RemoteStreamOptions(value=3)
-        expected = \
-            "AddInvocationInfoToErrorRecord, AddInvocationInfoToWarningRecord"
+        expected = "AddInvocationInfoToErrorRecord, AddInvocationInfoToWarningRecord"
         actual = str(options)
         assert actual == expected
 
 
 class TestPipeline(object):
 
-    PIPE_SINGLE = '''<Obj RefId="0">
+    PIPE_SINGLE = """<Obj RefId="0">
         <MS>
             <B N="IsNested">false</B>
             <Nil N="ExtraCmds"/>
@@ -301,9 +319,9 @@ class TestPipeline(object):
             <Nil N="History"/>
             <B N="RedirectShellErrorOutputPipe">false</B>
         </MS>
-    </Obj>'''
+    </Obj>"""
 
-    PIPE_MULTIPLE = '''<Obj RefId="0">
+    PIPE_MULTIPLE = """<Obj RefId="0">
         <MS>
             <B N="IsNested">false</B>
             <Obj N="ExtraCmds" RefId="1">
@@ -562,7 +580,7 @@ class TestPipeline(object):
             <Nil N="History"/>
             <B N="RedirectShellErrorOutputPipe">false</B>
         </MS>
-    </Obj>'''
+    </Obj>"""
 
     def test_create_pipeline_single(self):
         serializer = Serializer()
@@ -571,10 +589,7 @@ class TestPipeline(object):
         command.cmd = "Set-Variable"
         command.is_script = False
         command.use_local_scope = False
-        command.args = [
-            CommandParameter(name="Name", value="var"),
-            CommandParameter(name="Value", value="abc")
-        ]
+        command.args = [CommandParameter(name="Name", value="var"), CommandParameter(name="Value", value="abc")]
 
         pipeline = Pipeline()
         pipeline.is_nested = False
@@ -595,10 +610,7 @@ class TestPipeline(object):
         command1.is_script = False
         command1.use_local_scope = False
         command1.end_of_statement = True
-        command1.args = [
-            CommandParameter(name="Name", value="var"),
-            CommandParameter(name="Value", value="abc")
-        ]
+        command1.args = [CommandParameter(name="Name", value="var"), CommandParameter(name="Value", value="abc")]
 
         command2 = Command(protocol_version="2.2")
         command2.cmd = "Get-Variable"
@@ -625,8 +637,7 @@ class TestPipeline(object):
 
     def test_parse_pipeline_single(self):
         serializer = Serializer()
-        actual = serializer.deserialize(normalise_xml(self.PIPE_SINGLE),
-                                        ObjectMeta("Obj", object=Pipeline))
+        actual = serializer.deserialize(normalise_xml(self.PIPE_SINGLE), ObjectMeta("Obj", object=Pipeline))
         assert actual.history is None
         assert actual.is_nested is False
         assert actual.redirect_err_to_out is False
@@ -649,8 +660,7 @@ class TestPipeline(object):
 
     def test_parse_pipeline_multiple(self):
         serializer = Serializer()
-        actual = serializer.deserialize(normalise_xml(self.PIPE_MULTIPLE),
-                                        ObjectMeta("Obj", object=Pipeline))
+        actual = serializer.deserialize(normalise_xml(self.PIPE_MULTIPLE), ObjectMeta("Obj", object=Pipeline))
         assert actual.history is None
         assert actual.is_nested is False
         assert actual.redirect_err_to_out is False
@@ -699,7 +709,6 @@ class TestPipeline(object):
 
 
 class TestCommandType(object):
-
     def test_to_string_one_value(self):
         command_type = CommandType(value=1)
         expected = "Alias"
@@ -720,7 +729,6 @@ class TestCommandType(object):
 
 
 class TestPipelineResultTypes(object):
-
     def test_to_string_one_value(self):
         result_type = PipelineResultTypes(value=1)
         expected = "Output"
@@ -760,7 +768,7 @@ class TestPipelineResultTypes(object):
 
 class TestBufferCell(object):
 
-    BUFFER_CELL = '''<Obj RefId="0">
+    BUFFER_CELL = """<Obj RefId="0">
     <Props>
         <C N="character">65</C>
         <Obj N="foregroundColor" RefId="1">
@@ -780,15 +788,16 @@ class TestBufferCell(object):
         </Obj>
         <I32 N="bufferCellType">0</I32>
     </Props>
-</Obj>'''
+</Obj>"""
 
     def test_create_buffer_cell(self):
         serializer = Serializer()
 
         buffer_cell = BufferCell(
-            character="A", foreground_color=Color(value=Color.CYAN),
+            character="A",
+            foreground_color=Color(value=Color.CYAN),
             background_color=Color(value=Color.GREEN),
-            cell_type=BufferCellType.COMPLETE
+            cell_type=BufferCellType.COMPLETE,
         )
 
         expected_xml = normalise_xml(self.BUFFER_CELL)
@@ -799,8 +808,7 @@ class TestBufferCell(object):
 
     def test_parse_buffer_cell(self):
         serializer = Serializer()
-        actual = serializer.deserialize(normalise_xml(self.BUFFER_CELL),
-                                        ObjectMeta("Obj", object=BufferCell))
+        actual = serializer.deserialize(normalise_xml(self.BUFFER_CELL), ObjectMeta("Obj", object=BufferCell))
 
         assert actual.character == "A"
         assert actual.foreground_color.value == Color.CYAN
@@ -810,7 +818,7 @@ class TestBufferCell(object):
 
 class TestArray(object):
 
-    SINGLE_ARRAY = '''<Obj RefId="0">
+    SINGLE_ARRAY = """<Obj RefId="0">
     <MS>
         <Obj N="mae" RefId="1">
             <TN RefId="0">
@@ -831,9 +839,9 @@ class TestArray(object):
             </LST>
         </Obj>
     </MS>
-</Obj>'''
+</Obj>"""
 
-    SINGLE_ARRAY2 = '''<Obj RefId="0">
+    SINGLE_ARRAY2 = """<Obj RefId="0">
         <MS>
             <Obj N="mae" RefId="1">
                 <TN RefId="0">
@@ -854,9 +862,9 @@ class TestArray(object):
                 </LST>
             </Obj>
         </MS>
-    </Obj>'''
+    </Obj>"""
 
-    TWO_ARRAY = '''<Obj RefId="0">
+    TWO_ARRAY = """<Obj RefId="0">
     <MS>
         <Obj N="mae" RefId="1">
             <TN RefId="0">
@@ -884,9 +892,9 @@ class TestArray(object):
             </LST>
         </Obj>
     </MS>
-</Obj>'''
+</Obj>"""
 
-    THREE_ARRAY = '''<Obj RefId="0">
+    THREE_ARRAY = """<Obj RefId="0">
     <MS>
         <Obj N="mae" RefId="1">
             <TN RefId="0">
@@ -930,7 +938,7 @@ class TestArray(object):
             </LST>
         </Obj>
     </MS>
-</Obj>'''
+</Obj>"""
 
     def test_create_array(self):
         serializer = Serializer()
@@ -952,8 +960,7 @@ class TestArray(object):
 
     def test_parse_array(self):
         serializer = Serializer()
-        actual = serializer.deserialize(self.SINGLE_ARRAY,
-                                        ObjectMeta("Obj", object=Array))
+        actual = serializer.deserialize(self.SINGLE_ARRAY, ObjectMeta("Obj", object=Array))
         array = actual.array
         assert array == [1, 2, 3]
         assert actual.mae == [1, 2, 3]
@@ -972,8 +979,7 @@ class TestArray(object):
 
     def test_parse_two_dimensional_array(self):
         serializer = Serializer()
-        actual = serializer.deserialize(self.TWO_ARRAY,
-                                        ObjectMeta("Obj", object=Array))
+        actual = serializer.deserialize(self.TWO_ARRAY, ObjectMeta("Obj", object=Array))
         array = actual.array
         assert array == [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
         assert actual.mae == [1, 2, 3, 4, 5, 6, 7, 8, 9]
@@ -982,10 +988,12 @@ class TestArray(object):
     def test_three_dimensional_create_array(self):
         serializer = Serializer()
 
-        array = Array(array=[
-            [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12]],
-            [[13, 14, 15, 16], [17, 18, 19, 20], [21, 22, 23, 24]]
-        ])
+        array = Array(
+            array=[
+                [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12]],
+                [[13, 14, 15, 16], [17, 18, 19, 20], [21, 22, 23, 24]],
+            ]
+        )
 
         expected_xml = normalise_xml(self.THREE_ARRAY)
         actual = serializer.serialize(array)
@@ -995,13 +1003,11 @@ class TestArray(object):
 
     def test_parse_three_dimensional_array(self):
         serializer = Serializer()
-        actual = serializer.deserialize(self.THREE_ARRAY,
-                                        ObjectMeta("Obj", object=Array))
+        actual = serializer.deserialize(self.THREE_ARRAY, ObjectMeta("Obj", object=Array))
         array = actual.array
         assert array == [
             [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12]],
-            [[13, 14, 15, 16], [17, 18, 19, 20], [21, 22, 23, 24]]
+            [[13, 14, 15, 16], [17, 18, 19, 20], [21, 22, 23, 24]],
         ]
-        assert actual.mae == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
-                              13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
+        assert actual.mae == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
         assert actual.mal == [2, 3, 4]

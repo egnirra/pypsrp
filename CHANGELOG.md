@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.0 - TBD
+
+### Breaking changes
+
+* Changed http dep from `requests` to `httpx` to support `asyncio`
+* Removed the `credssp_minimum_version` kwarg for `pypsrp.wsman.WSMan` as the underlying library does not support setting this option
+
+
 ## 0.6.0 - 2021-10-21
 
 ### Breaking changes
@@ -9,9 +17,11 @@
 * Use `poetry` as the packaging and dependency management tool
 * Added [pykrb5](https://github.com/jborean93/pykrb5) as extra dependency for Kerberos auth on non-Windows due to a dependecy change on `pyspnego`
 
+
 ### Features
 
 * Use [File.Move](https://docs.microsoft.com/en-us/dotnet/api/system.io.file.move?view=net-5.0) when calling `Client.copy()` to optimistically speed up server side operations
+* Added an `Async*` class for WSMan, WinRS, Process, RunspacePool, PowerShell that is compatible with `asyncio`
 
 
 ## 0.5.0 - 2020-08-13
