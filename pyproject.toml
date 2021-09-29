@@ -15,7 +15,7 @@ include = [
 [tool.poetry.dependencies]
 python = "^3.6.2"
 cryptography = "*"
-pyspnego = "< 1.0.0"
+pyspnego = "^0.2.0"
 httpx = "^0.18.2"
 httpcore = "^0.13.6"
 async_generator = {version = "^1.10", python = "< 3.7"}

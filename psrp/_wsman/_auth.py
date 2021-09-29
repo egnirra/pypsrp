@@ -10,6 +10,8 @@ import logging
 import re
 import spnego
 import spnego.channel_bindings
+import spnego.tls
+import ssl
 import typing
 
 from cryptography import x509
@@ -137,7 +139,7 @@ class NegotiateAuth(_AuthBase):
         disable_cbt: bool = False,
         delegate: bool = False,
         credssp_allow_tlsv1: bool = False,
-        credssp_require_kerberos: bool = False,
+        credssp_auth_mechanism: str = "negotiate",
     ):
         valid_protocols = ["kerberos", "negotiate", "ntlm", "credssp"]
         if protocol not in valid_protocols:
@@ -160,7 +162,12 @@ class NegotiateAuth(_AuthBase):
         self._disable_cbt = disable_cbt
         self._delegate = delegate
         self._credssp_allow_tlsv1 = credssp_allow_tlsv1
-        self._credssp_require_kerberos = credssp_require_kerberos
+        self._credssp_auth_mechanism = credssp_auth_mechanism.lower()
+
+        if self._credssp_auth_mechanism not in ["kerberos", "negotiate", "ntlm"]:
+            raise ValueError(
+                f"{type(self).__name__} credssp_auth_mechanism must be set to kerberos, " "negotiate, or ntlm"
+            )
 
     @property
     def _complete(self) -> bool:
@@ -344,33 +351,47 @@ class NegotiateAuth(_AuthBase):
             cert_hash = get_tls_server_end_point_hash(cert)
             cbt = spnego.channel_bindings.GssChannelBindings(application_data=b"tls-server-end-point:" + cert_hash)
 
-        context_req = spnego.ContextReq.default
-        spnego_options = spnego.NegotiateOptions.none
-
-        if self._encrypt:
-            spnego_options |= spnego.NegotiateOptions.wrapping_winrm
+        username, password = self._credential
+        auth_kwargs = {
+            "username": username,
+            "password": password,
+            "hostname": self._hostname_override or hostname.decode("utf-8"),
+            "service": self._service,
+            "context_req": spnego.ContextReq.default,
+            "options": spnego.NegotiateOptions.none,
+        }
 
         if self.protocol == "credssp":
-            if self._credssp_allow_tlsv1:
-                spnego_options |= spnego.NegotiateOptions.credssp_allow_tlsv1
+            sub_auth_protocol = None
+            if self._credssp_auth_mechanism == "kerberos":
+                sub_auth_protocol = "kerberos"
 
-            if self._credssp_require_kerberos:
-                spnego_options |= spnego.NegotiateOptions.negotiate_kerberos
+            elif self._credssp_auth_mechanism == "ntlm":
+                sub_auth_protocol = "ntlm"
+
+            if sub_auth_protocol:
+                sub_auth = spnego.client(protocol=sub_auth_protocol, **auth_kwargs)
+                auth_kwargs["credssp_negotiate_context"] = sub_auth
+
+            if self._credssp_allow_tlsv1:
+                ssl_context = spnego.tls.default_tls_context()
+                try:
+                    ssl_context.context.minimum_version |= ssl.TLSVersion.TLSv1
+                except (AttributeError, ValueError):
+                    ssl_context.context.options &= ~(ssl.Options.OP_NO_TLSv1 | ssl.Options.OP_NO_TLSv1_1)
+
+                auth_kwargs["credssp_tls_context"] = ssl_context
 
         elif self._delegate:
-            context_req |= spnego.ContextReq.delegate
+            auth_kwargs["context_req"] |= spnego.ContextReq.delegate
 
-        username, password = self._credential
-        auth_hostname = self._hostname_override or hostname.decode("utf-8")
+        if self._encrypt:
+            auth_kwargs["options"] |= spnego.NegotiateOptions.wrapping_winrm
+
         return spnego.client(
-            username,
-            password,
-            hostname=auth_hostname,
-            service=self._service,
             channel_bindings=cbt,
-            context_req=context_req,
             protocol=self.protocol,
-            options=spnego_options,
+            **auth_kwargs,
         )
 
     def _add_header(self, headers: httpx.Headers, token: bytes, authz_header: str):

@@ -56,7 +56,7 @@ class _WSManConnectionBase(metaclass=abc.ABCMeta):
         send_cbt: bool = True,
         # CredSSP
         credssp_allow_tlsv1: bool = False,
-        credssp_require_kerberos: bool = False,
+        credssp_auth_mechanism: str = 'negotiate',
     ):
         self.connection_uri = urlparse(connection_uri)
 
@@ -100,7 +100,7 @@ class _WSManConnectionBase(metaclass=abc.ABCMeta):
                 disable_cbt=not send_cbt,
                 delegate=negotiate_delegate,
                 credssp_allow_tlsv1=credssp_allow_tlsv1,
-                credssp_require_kerberos=credssp_require_kerberos,
+                credssp_auth_mechanism=credssp_auth_mechanism,
             )
 
         else:

@@ -3,6 +3,9 @@
 # MIT License (see LICENSE or https://opensource.org/licenses/MIT)
 
 import asyncio
+from asyncio import subprocess
+from asyncio.transports import Transport
+import subprocess
 import typing
 
 from psrp.exceptions import (
@@ -72,14 +75,60 @@ class AsyncWinRS:
         self.winrs.open()
         await self._exchange_data()
 
-    async def execute(
+    async def create_subprocess(
         self,
-        executable: str,
-        args: typing.Optional[typing.List[str]] = None,
-        no_shell: bool = False,
+        program: str,
+        *args: str,
+        stdin: typing.Optional[typing.Union[int]] = subprocess.PIPE,
+        stdout: typing.Optional[typing.Union[int]] = subprocess.PIPE,
+        stderr: typing.Optional[typing.Union[int]] = subprocess.PIPE,
+        limit: int = 65536,
+        **kwds: typing.Any,
     ) -> "AsyncWinRSProcess":
-        """Starts a new process on the WinRS shell."""
-        return AsyncWinRSProcess(self, executable, args=args, no_shell=no_shell)
+        loop = asyncio.get_event_loop()
+
+        protocol_factory = lambda: WinRSSubprocessProtocol(limit=limit, loop=loop)
+        transport, protocol = await self.subprocess_exec(
+            protocol_factory, program, *args, stdin=stdin, stdout=stdout, stderr=stderr, **kwds
+        )
+        return WinRSProcess(transport, protocol, loop)
+
+    async def subprocess_exec(
+        self,
+        protocol_factory: typing.Callable[[], asyncio.SubprocessProtocol],
+        program: str,
+        *args: str,
+        stdin: typing.Optional[typing.Union[int]] = subprocess.PIPE,
+        stdout: typing.Optional[typing.Union[int]] = subprocess.PIPE,
+        stderr: typing.Optional[typing.Union[int]] = subprocess.PIPE,
+        no_shell: bool = False,
+    ) -> typing.Tuple[asyncio.SubprocessTransport, asyncio.SubprocessProtocol]:
+        loop = asyncio.get_event_loop()
+
+        self.winrs.command(program, args=args, no_shell=no_shell)
+        command_event = await self._exchange_data()
+
+        waiter = loop.create_future()
+        protocol = protocol_factory()
+        transport = WinRSProcessTransport(
+            loop,
+            protocol,
+            extra={
+                "command_id": command_event.command_id,
+                "shell": self,
+            },
+        )
+
+        try:
+            await waiter
+        except (SystemExit, KeyboardInterrupt):
+            raise
+        except BaseException:
+            transport.close()
+            await transport._wait()
+            raise
+
+        return transport, protocol
 
     async def _exchange_data(self, io=None):
         """Sends the pending messages from the WinRS shell over the IO object and returns the response."""
@@ -91,6 +140,264 @@ class AsyncWinRS:
 
         event = self.winrs.receive_data(response)
         return event
+
+
+class WinRSProcessTransport(asyncio.SubprocessTransport):
+    def __init__(
+        self,
+        loop: asyncio.BaseEventLoop,
+        protocol: asyncio.SubprocessProtocol,
+        waiter: typing.Optional[asyncio.Future] = None,
+        extra: typing.Optional[dict] = None,
+    ) -> None:
+        super().__init__(extra)
+        self._loop = loop
+        self._protocol = protocol
+        self._proc = None
+        self._pid: typing.Optional[int] = None
+        self._returncode: typing.Optional[int] = None
+        self._pipes: typing.Dict[int, asyncio.BaseTransport] = {}
+        self._finished = False
+
+        loop.create_task(self._listen(waiter))
+
+    def set_protocol(
+        self,
+        protocol: asyncio.SubprocessProtocol,
+    ) -> None:
+        self._protocol = protocol
+
+    def get_protocol(self) -> asyncio.SubprocessProtocol:
+        return self._protocol
+
+    def get_pid(self) -> int:
+        return self._pid
+
+    def get_pipe_transport(self, fd: int) -> typing.Optional[asyncio.BaseTransport]:
+        return self._pipes.get(fd, None)
+
+    def get_returncode(self) -> typing.Optional[int]:
+        return self._returncode
+
+    def kill(self) -> None:
+        return super().kill()
+
+    def send_signal(self, signal: int) -> int:
+        return super().send_signal(signal)
+
+    def terminate(self) -> None:
+        return super().terminate()
+
+    def close(self) -> None:
+        return super().close()
+
+    async def _listen(
+        self,
+        waiter: typing.Optional[asyncio.Future],
+    ):
+        shell = typing.cast(AsyncWinRS, self.get_extra_info("shell"))
+        command_id = typing.cast(str, self.get_extra_info("command_id"))
+        state = CommandState.running
+
+        # Use a new WSMan connection so we can send the Receive requests in parallel to the main shell connection.
+        async with AsyncWSManConnection(shell.wsman.connection_uri) as io:
+            if waiter and not waiter.cancelled():
+                waiter.set_result(None)
+
+            while state != CommandState.done:
+                shell.winrs.receive(command_id=command_id)
+
+                try:
+                    receive_response = await shell._exchange_data(io=io)
+                except OperationTimedOut:
+                    # Expected if no data was available in the WSMan operational_timeout time. Just send the receive
+                    # request again until there is data available.
+                    continue
+
+                state = receive_response.command_state
+                if receive_response.exit_code is not None:
+                    self._returncode = receive_response.exit_code
+
+                buffer = receive_response.get_streams()
+                pipe_map = [("stdout", self.stdout), ("stderr", self.stderr)]
+                for name, pipe in pipe_map:
+                    for data in buffer.get(name, []):
+                        pipe.feed_data(data)
+
+        self.stdout.feed_eof()
+        self.stderr.feed_eof()
+
+
+class WriteSubprocessPipeProto(asyncio.BaseProtocol):
+    def __init__(
+        self,
+        transport: WinRSProcessTransport,
+        fd: int,
+    ) -> None:
+        self.transport = transport
+        self.fd = fd
+        self.disconnected = False
+
+    def connection_made(self, transport):
+        a = ""
+
+    def connection_lost(
+        self,
+        exc: typing.Optional[Exception],
+    ) -> None:
+        self.disconnected = True
+        self.transport._pipe_connection_lost(self.fd, exc)
+        self.transport = None
+
+    def pause_writing(self) -> None:
+        self.transport._protocol.pause_writing()
+
+    def resume_writing(self) -> None:
+        self.transport._protocol.resume_writing()
+
+
+class ReadSubprocessPipeProto(WriteSubprocessPipeProto, asyncio.Protocol):
+    def data_received(
+        self,
+        data: bytes,
+    ) -> None:
+        self.transport._pipe_data_received(self.fd, data)
+
+
+class WinRSSubprocessProtocol(asyncio.SubprocessProtocol):
+    def __init__(
+        self,
+        limit: int,
+        loop: asyncio.BaseEventLoop,
+    ):
+        super().__init__(loop=loop)
+        self._limit = limit
+        self._transport: typing.Optional[asyncio.SubprocessTransport] = None
+        self._process_exited = False
+
+        self.stdin: typing.Optional[asyncio.StreamWriter] = None
+        self.stdout: typing.Optional[asyncio.StreamReader] = None
+        self.stderr: typing.Optional[asyncio.StreamReader] = None
+
+    def connection_made(
+        self,
+        transport: asyncio.SubprocessTransport,
+    ) -> None:
+        self._transport = transport
+
+        stdin_transport = transport.get_pipe_transport(0)
+        if stdin_transport is not None:
+            self.stdin = asyncio.StreamWriter(stdin_transport, protocol=self, reader=None, loop=self._loop)
+
+        stdout_transport = transport.get_pipe_transport(1)
+        if stdout_transport is not None:
+            self.stdout = asyncio.StreamReader(limit=self._limit, loop=self._loop)
+            self.stdout.set_transport(stdout_transport)
+
+        stderr_transport = transport.get_pipe_transport(2)
+        if stderr_transport is not None:
+            self.stderr = asyncio.StreamReader(limit=self._limit, loop=self._loop)
+            self.stderr.set_transport(stderr_transport)
+
+    def pipe_data_received(
+        self,
+        fd: int,
+        data: bytes,
+    ):
+        """Called when the subprocess writes data into stdout/stderr pipe.
+
+        fd is int file descriptor.
+        data is bytes object.
+        """
+        pipe = {
+            1: self.stdout,
+            2: self.stderr,
+        }.get(fd, None)
+        if pipe:
+            pipe.feed_data(data)
+
+    def pipe_connection_lost(
+        self,
+        fd: int,
+        exc: typing.Optional[Exception],
+    ):
+        """Called when a file descriptor associated with the child process is
+        closed.
+
+        fd is the int file descriptor that was closed.
+        """
+        if fd == 0:
+            if self.stdin:
+                self.stdin.close()
+
+            self.stdin = None
+            self.connection_lost(exc)
+
+        pipe = None
+        if fd == 1 and self.stdout:
+            pipe = self.stdout
+            self.stdout = None
+
+        if fd == 2 and self.stderr:
+            pipe = self.stderr
+            self.stderr = None
+
+        if pipe:
+            if not exc:
+                pipe.feed_eof()
+            else:
+                pipe.set_exception(exc)
+
+        self._maybe_close_transport()
+
+    def process_exited(self):
+        """Called when subprocess has exited."""
+        self._process_exited = True
+        self._maybe_close_transport()
+
+    def _maybe_close_transport(self):
+        if self._transport and self._process_exited and not self.stdout and not self.stderr:
+            self._transport.close()
+            self._transport = None
+
+
+class WinRSProcess:
+    def __init__(
+        self,
+        transport: asyncio.SubprocessTransport,
+        protocol: WinRSSubprocessProtocol,
+        loop: asyncio.BaseEventLoop,
+        command_id: str,
+    ):
+        self._transport = transport
+        self._protocol = protocol
+        self._loop = loop
+
+        self.command_id = command_id
+        self.state = CommandState.running
+        self.stdin = protocol.stdin
+        self.stdout = protocol.stdout
+        self.stderr = protocol.stderr
+        self.pid = transport.get_pid()
+        self.returncode: typing.Optional[int] = None
+
+    async def wait(self) -> int:
+        raise NotImplementedError()
+
+    async def communicate(
+        self,
+        input: typing.Optional[bytes] = None,
+    ) -> typing.Tuple[typing.Optional[bytes], typing.Optional[bytes]]:
+        raise NotImplementedError()
+
+    def send_signal(self, signal: int) -> None:
+        raise NotImplementedError()
+
+    def terminate(self) -> None:
+        raise NotImplementedError()
+
+    def kill(self) -> None:
+        raise NotImplementedError()
 
 
 class AsyncWinRSProcess:
