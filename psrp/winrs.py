@@ -3,8 +3,7 @@
 # MIT License (see LICENSE or https://opensource.org/licenses/MIT)
 
 import asyncio
-from asyncio import subprocess
-from asyncio.transports import Transport
+import signal as py_signal
 import subprocess
 import typing
 
@@ -25,6 +24,13 @@ from psrp.protocol.wsman import (
     CommandState,
     WSMan,
 )
+
+
+# Signals known to WinRS, some are platform specific so have a fallback value
+SIGINT = py_signal.SIGINT
+SIGKILL = getattr(py_signal, "SIGKILL", py_signal.Signals(9))
+SIGTERM = py_signal.SIGTERM
+SIGBREAK = getattr(py_signal, "SIGBREAK", py_signal.Signals(21))
 
 
 class AsyncWinRS:
@@ -137,8 +143,10 @@ class AsyncWinRS:
             io = self._io
 
         content = self.winrs.data_to_send()
-        response = await io.send(content)
+        if not content:
+            return
 
+        response = await io.send(content)
         event = self.winrs.receive_data(response)
         return event
 
@@ -151,33 +159,13 @@ class WinRSReadPipeTransport(asyncio.ReadTransport):
     ) -> None:
         super().__init__(extra)
         self._transport = transport
-        # self._protocol = protocol
         self._closing = False
-        self._paused = False
 
     def close(self) -> None:
         self._closing = True
 
     def is_closing(self) -> bool:
         return self._closing
-
-    def set_protocol(
-        self,
-        protocol: asyncio.Protocol,
-    ) -> None:
-        self._protocol = protocol
-
-    def get_protocol(self) -> asyncio.Protocol:
-        return self._protocol
-
-    def is_reading(self) -> bool:
-        raise NotImplementedError()
-
-    def pause_reading(self) -> None:
-        raise NotImplementedError()
-
-    def resume_reading(self) -> None:
-        raise NotImplementedError()
 
 
 class WinRSWritePipeTransport(asyncio.WriteTransport):
@@ -227,42 +215,6 @@ class WinRSWritePipeTransport(asyncio.WriteTransport):
         raise NotImplementedError()
 
 
-# class WinRSWritePipeProtocol(asyncio.Protocol):
-#     def __init__(
-#         self,
-#         fd: int,
-#     ) -> None:
-#         self.transport = None
-#         self.fd = fd
-#         self.disconnected = False
-
-#     def connection_made(
-#         self,
-#         transport: asyncio.Transport,
-#     ):
-#         self.transport = transport
-
-#     def connection_lost(
-#         self,
-#         exc: typing.Optional[Exception],
-#     ) -> None:
-#         raise NotImplementedError()
-
-#     def pause_writing(self) -> None:
-#         raise NotImplementedError()
-
-#     def resume_writing(self) -> None:
-#         raise NotImplementedError()
-
-
-# class WinRSReadPipeProtocol(WinRSWritePipeProtocol):
-#     def data_received(
-#         self,
-#         data: bytes,
-#     ) -> None:
-#         raise NotImplementedError()
-
-
 class WinRSProcessTransport(asyncio.SubprocessTransport):
     def __init__(
         self,
@@ -285,7 +237,7 @@ class WinRSProcessTransport(asyncio.SubprocessTransport):
             1: WinRSReadPipeTransport(self),
             2: WinRSReadPipeTransport(self),
         }
-        self._process_exited = asyncio.Future()
+        self._end_waiters: typing.List[asyncio.Future] = []
 
         loop.create_task(self._listen(waiter))
 
@@ -298,9 +250,6 @@ class WinRSProcessTransport(asyncio.SubprocessTransport):
     def get_protocol(self) -> asyncio.SubprocessProtocol:
         return self._protocol
 
-    def get_pid(self) -> int:
-        raise NotImplementedError()
-
     def get_pipe_transport(self, fd: int) -> None:
         return self._pipes.get(fd, None)
 
@@ -308,19 +257,39 @@ class WinRSProcessTransport(asyncio.SubprocessTransport):
         return self._returncode
 
     def kill(self) -> None:
-        raise NotImplementedError()
+        self.terminate()
 
-    def send_signal(self, signal: int) -> int:
-        raise NotImplementedError()
+    def send_signal(
+        self,
+        signal: typing.Union[int, str],
+    ) -> int:
+        if signal == SIGINT:
+            signal = SignalCode.ctrl_c
+        elif signal == SIGBREAK:
+            signal = SignalCode.ctrl_break
+        elif signal in [SIGKILL, SIGTERM]:
+            signal = SignalCode.terminate
+        elif isinstance(signal, int):
+            raise ValueError(f"invalid signal, must be {SIGINT!s}, {SIGKILL!s}, {SIGTERM!s}, or {SIGBREAK!s}")
+
+        self._shell.winrs.signal(signal, self._command_id)
+        self._loop.call_soon(self._shell._exchange_data)
 
     def terminate(self) -> None:
-        raise NotImplementedError()
+        self.send_signal(SIGTERM)
 
     def close(self) -> None:
-        raise NotImplementedError()
+        if self._closed:
+            return
+
+        self.terminate()
+        self._closed = True
 
     async def _wait(self) -> int:
-        await self._process_exited
+        waiter = self._loop.create_future()
+        self._end_waiters.append(waiter)
+        await waiter
+
         return self._returncode
 
     async def _listen(
@@ -354,7 +323,16 @@ class WinRSProcessTransport(asyncio.SubprocessTransport):
                     for line in buffer[name]:
                         self._loop.call_soon(self._protocol.pipe_data_received, fd, line)
 
-        self._process_exited.set_result(None)
+            self._loop.call_soon(self._protocol.pipe_connection_lost, 1, None)
+            self._loop.call_soon(self._protocol.pipe_connection_lost, 2, None)
+
+            self._shell.winrs.signal(SignalCode.terminate, self._command_id)
+            await self._shell._exchange_data(io=io)
+
+        for end_waiter in self._end_waiters:
+            end_waiter.set_result(None)
+        self._end_waiters = []
+
         self._loop.call_soon(self._protocol.process_exited)
 
 
@@ -493,174 +471,3 @@ class WinRSProcess:
 
     def kill(self) -> None:
         raise NotImplementedError()
-
-
-class AsyncWinRSProcess:
-    def __init__(
-        self,
-        winrs: AsyncWinRS,
-        executable: str,
-        args: typing.Optional[typing.List[str]] = None,
-        no_shell: bool = False,
-    ):
-        self.executable = executable
-        self.args = args
-        self.no_sell = no_shell
-        self._stdin_r = self._stdout_w = self._stderr_w = self.stdin = self.stdout = self.stdin = None
-        # self.pid = None
-        self.returncode = None
-
-        self._command_id = None
-        self._state = CommandState.pending
-        self._winrs = winrs
-        self._receive_task = None
-
-    async def __aenter__(self):
-        await self.start()
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        await self.terminate()
-        await self._receive_task
-        self._receive_task = None
-
-    async def poll(
-        self,
-    ) -> typing.Optional[int]:
-        a = ""
-
-    async def wait(
-        self,
-        timeout: typing.Optional[int] = None,
-    ) -> int:
-        await self._receive_task
-
-    async def communicate(
-        self,
-        input_data: typing.Optional[bytes] = None,
-        timeout: typing.Optional[int] = None,
-    ) -> typing.Tuple[bytes, bytes]:
-        self.stdin.write(input_data)
-        await self.stdin.drain()
-
-    async def send_signal(
-        self,
-        signal: SignalCode,
-    ):
-        self._winrs.winrs.signal(signal, self._command_id)
-        await self._winrs._exchange_data()
-
-    async def start(
-        self,
-    ):
-        loop = asyncio.get_event_loop()
-        self.stdout = asyncio.StreamReader(loop=loop)
-        self.stderr = asyncio.StreamReader(loop=loop)
-
-        r = asyncio.StreamReader(loop=loop)
-        p = asyncio.StreamReaderProtocol(r, loop=loop)
-        t = None
-
-        self.stdin = asyncio.StreamWriter(transport=t, protocol=p, reader=r, loop=loop)
-
-        self._winrs.winrs.command(self.executable, args=self.args, no_shell=self.no_sell)
-        command_event = await self._winrs._exchange_data()
-        self._state = CommandState.running
-        self._command_id = command_event.command_id
-        self._receive_task = asyncio.create_task(self._receive())
-
-    async def terminate(
-        self,
-    ):
-        await self.send_signal(SignalCode.terminate)
-
-    async def kill(
-        self,
-    ):
-        await self.send_signal(SignalCode.ctrl_c)
-
-    async def _receive(
-        self,
-    ):
-        # Use a new WSMan connection so we can send the Receive requests in parallel to the main shell connection.
-        async with AsyncWSManConnection(self._winrs.winrs.wsman.connection_uri) as io:
-            while self._state != CommandState.done:
-                self._winrs.winrs.receive(command_id=self._command_id)
-
-                try:
-                    receive_response = await self._winrs._exchange_data(io=io)
-                except OperationTimedOut:
-                    # Expected if no data was available in the WSMan operational_timeout time. Just send the receive
-                    # request again until there is data available.
-                    continue
-
-                if receive_response.exit_code is not None:
-                    self.returncode = receive_response.exit_code
-                self._state = receive_response.command_state
-
-                buffer = receive_response.get_streams()
-                pipe_map = [("stdout", self.stdout), ("stderr", self.stderr)]
-                for name, pipe in pipe_map:
-                    for data in buffer.get(name, []):
-                        pipe.feed_data(data)
-
-        self.stdout.feed_eof()
-        self.stderr.feed_eof()
-
-
-class StdinTransport(asyncio.transports.WriteTransport):
-    def __init__(self, loop, protocol):
-        super().__init__()
-        self._loop = loop
-        self._protocol = protocol
-
-    def write(self, data):
-        """Write some data bytes to the transport.
-
-        This does not block; it buffers the data and arranges for it
-        to be sent out asynchronously.
-        """
-        self._protocol.data_received(data)
-
-    def writelines(self, list_of_data):
-        """Write a list (or any iterable) of data bytes to the transport.
-
-        The default implementation concatenates the arguments and
-        calls write() on the result.
-        """
-        data = b"".join(list_of_data)
-        self.write(data)
-
-    def write_eof(self):
-        """Close the write end after flushing buffered data.
-
-        (This is like typing ^D into a UNIX program reading from stdin.)
-
-        Data may still be received.
-        """
-        self._protocol.eof_received()
-
-    def can_write_eof(self):
-        """Return True if this transport supports write_eof(), False if not."""
-        return True
-
-    def abort(self):
-        """Close the transport immediately.
-
-        Buffered data will be lost.  No more data will be received.
-        The protocol's connection_lost() method will (eventually) be
-        called with None as its argument.
-        """
-        raise NotImplementedError
-
-
-def _create_inmemory_stream():
-    loop = asyncio.events.get_event_loop()
-
-    reader = asyncio.StreamReader(loop=loop)
-    protocol = asyncio.StreamReaderProtocol(reader, loop=loop)
-    transport = StdinTransport(loop, protocol)
-    # transport.set_write_buffer_limits(0)  # Make sure .drain() actually sends all the data.
-    writer = asyncio.StreamWriter(transport, protocol, reader, loop)
-
-    return reader, writer
