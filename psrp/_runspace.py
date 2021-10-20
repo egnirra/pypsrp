@@ -249,7 +249,7 @@ class _RunspacePoolBase:
                 RunspacePoolHostCallEvent,
             ),
         ):
-            self._ci_table[int(event.ps_object.ci)] = event
+            self._ci_table[int(event.ci)] = event
 
         if event.pipeline_id:
             pipeline = self.pipeline_table[event.pipeline_id]
@@ -640,7 +640,7 @@ class _PipelineBase:
 
         self._registrations[PSRPMessageType.PipelineState].append(self._on_state)
         self._registrations[PSRPMessageType.PipelineHostCall].append(self._on_host_call)
-        self._registrations[PSRPMessageType.PipelineOutput].append(lambda e: self._output_stream.append(e.ps_object))
+        self._registrations[PSRPMessageType.PipelineOutput].append(lambda e: self._output_stream.append(e.data))
 
         stream_type = AsyncPSDataStream if isinstance(self, AsyncPipeline) else PSDataStream
         for name, mt in [
@@ -653,7 +653,7 @@ class _PipelineBase:
         ]:
             stream = stream_type()
             self.streams[name] = stream
-            self._registrations[mt].append(lambda e: stream.append(e.ps_object))
+            self._registrations[mt].append(lambda e: stream.append(e.record))
 
     @property
     def had_errors(self) -> bool:
@@ -948,10 +948,10 @@ class AsyncPipeline(_PipelineBase):
         pool = self.runspace_pool.pool
 
         try:
-            self.pipeline.invoke()
+            self.pipeline.start()
         except MissingCipherError:
             await self.runspace_pool.exchange_key()
-            self.pipeline.invoke()
+            self.pipeline.start()
 
         self.runspace_pool.pipeline_table[self.pipeline.pipeline_id] = self
         await self.runspace_pool.connection.command(pool, self.pipeline.pipeline_id)
@@ -1025,11 +1025,11 @@ class AsyncPipeline(_PipelineBase):
         self,
         event: PSRPEvent,
     ):
-        host_call = event.ps_object
         host = getattr(self, "host", None) or self.runspace_pool.host
 
-        mi = host_call.mi
-        mp = host_call.mp
+        ci = event.ci
+        mi = event.method_identifier
+        mp = event.method_parameters
         method_metadata = get_host_method(host, mi, mp)
         func = method_metadata.invoke
 
@@ -1060,7 +1060,7 @@ class AsyncPipeline(_PipelineBase):
                 return
 
         if not method_metadata.is_void:
-            self.runspace_pool.pool.host_response(host_call.ci, return_value=return_value, error_record=error_record)
+            self.runspace_pool.pool.host_response(ci, return_value=return_value, error_record=error_record)
             await self.runspace_pool.connection.send_all(self.runspace_pool.pool)
 
 

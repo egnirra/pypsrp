@@ -8,7 +8,7 @@
             "name": "Python: Adhoc",
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/jordan2.py",
+            "program": "${workspaceFolder}/jordan.py",
             "console": "integratedTerminal",
             "justMyCode": false,
         },

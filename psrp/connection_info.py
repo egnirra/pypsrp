@@ -633,7 +633,7 @@ class OutOfProcInfo(ConnectionInfo):
 
             else:
                 with self._wait_condition:
-                    self._wait_table.remove(f'{tag}:{ps_guid or ""}')
+                    self._wait_table.remove(f'{tag}:{(ps_guid or "").lower()}')
                     self._wait_condition.notify_all()
 
         self.queue_response(self._runspace_pool.runspace_pool_id, None)
@@ -788,7 +788,7 @@ class AsyncOutOfProcInfo(AsyncConnectionInfo):
 
             else:
                 async with self._wait_condition:
-                    self._wait_table.remove(f'{tag}:{ps_guid or ""}')
+                    self._wait_table.remove(f'{tag}:{(ps_guid or "").lower()}')
                     self._wait_condition.notify_all()
 
         await self.queue_response(self._runspace_pool.runspace_pool_id, None)
@@ -1469,7 +1469,7 @@ def _ps_data_packet(
     """
     ps_guid = ps_guid or _EMPTY_UUID
     stream_name = b"Default" if stream_type == StreamType.default else b"PromptResponse"
-    return b"<Data Stream='%s' PSGuid='%s'>%s</Data>\n" % (stream_name, ps_guid.encode(), base64.b64encode(data))
+    return b"<Data Stream='%s' PSGuid='%s'>%s</Data>\n" % (stream_name, str(ps_guid).encode(), base64.b64encode(data))
 
 
 def _ps_guid_packet(
@@ -1492,4 +1492,4 @@ def _ps_guid_packet(
         bytes: The encoded PSGuid packet.
     """
     ps_guid = ps_guid or _EMPTY_UUID
-    return b"<%s PSGuid='%s' />\n" % (element.encode(), ps_guid.encode())
+    return b"<%s PSGuid='%s' />\n" % (element.encode(), str(ps_guid).encode())

@@ -152,7 +152,7 @@ async def async_main():
 
     await asyncio.gather(
         # # Process Scenrios
-        # async_psrp(AsyncProcessInfo()),
+        async_psrp(AsyncProcessInfo()),
         # # SSH Scenarios
         # async_psrp(AsyncSSHInfo("test.wsman.env", username="vagrant", password="vagrant")),
         # # I was hoping this would work but it doesn't, need to play around with this some more locally
@@ -202,17 +202,17 @@ async def async_main():
         # ),
         # # Anonymous Proxy ###
         # # https_basic_https_anon
-        async_psrp(
-            AsyncWSManInfo(
-                f"https://test.wsman.env:29900/wsman",
-                proxy="https://squid.wsman.env:3130/",
-                verify=cert_ca_path,
-                auth="basic",
-                username="ansible",
-                password="Password123!",
-                encryption="never",
-            )
-        ),
+        # async_psrp(
+        #     AsyncWSManInfo(
+        #         f"https://test.wsman.env:29900/wsman",
+        #         proxy="https://squid.wsman.env:3130/",
+        #         verify=cert_ca_path,
+        #         auth="basic",
+        #         username="ansible",
+        #         password="Password123!",
+        #         encryption="never",
+        #     )
+        # ),
         # # http_nego_http_anon
         # async_psrp(AsyncWSManInfo(f"http://test.wsman.env:29938/wsman", proxy="http://squid.wsman.env:3129/")),
         # # http_nego_https_anon
