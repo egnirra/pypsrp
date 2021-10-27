@@ -153,6 +153,9 @@ async def async_main():
     await asyncio.gather(
         # # Process Scenrios
         async_psrp(AsyncProcessInfo()),
+        # async_psrp(
+        #     AsyncWSManInfo(f"http://server2019.domain.test:5985/wsman"),
+        # )
         # # SSH Scenarios
         # async_psrp(AsyncSSHInfo("test.wsman.env", username="vagrant", password="vagrant")),
         # # I was hoping this would work but it doesn't, need to play around with this some more locally

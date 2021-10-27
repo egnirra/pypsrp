@@ -376,7 +376,7 @@ class NegotiateAuth(_AuthBase):
             if self._credssp_allow_tlsv1:
                 ssl_context = spnego.tls.default_tls_context()
                 try:
-                    ssl_context.context.minimum_version |= ssl.TLSVersion.TLSv1
+                    ssl_context.context.minimum_version = ssl.TLSVersion.TLSv1
                 except (AttributeError, ValueError):
                     ssl_context.context.options &= ~(ssl.Options.OP_NO_TLSv1 | ssl.Options.OP_NO_TLSv1_1)
 
